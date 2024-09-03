@@ -1,0 +1,355 @@
+HOME SCREEN
+
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  View,
+  Text,
+  FlatList,
+  TouchableOpacity,
+  Image,
+  StyleSheet,
+  useWindowDimensions,
+  TextInput,
+  ActivityIndicator,
+  SectionList,
+} from "react-native";
+import { StackNavigationProp } from "@react-navigation/stack";
+import { Ionicons } from "@expo/vector-icons";
+import { Picker } from "@react-native-picker/picker";
+
+type RootStackParamList = {
+  Home: undefined;
+  Video: { uri: string; title: string; sinopsis: string };
+  Detail: { video: Video };
+};
+
+type HomeScreenNavigationProp = StackNavigationProp<RootStackParamList, "Home">;
+
+type Props = {
+  navigation: HomeScreenNavigationProp;
+};
+
+interface Video {
+  id: string;
+  nombre: string;
+  url_video: string;
+  url_imagen: string;
+  nombre_categoria: string;
+  fecha_subida: string;
+  sinopsis: string;
+  tipo: "pelicula" | "episodio";
+  nombre_serie?: string;
+  serie_id?: string;
+}
+
+interface SeriesGroup {
+  title: string;
+  data: Video[];
+}
+
+const HomeScreen: React.FC<Props> = ({ navigation }) => {
+  const { width } = useWindowDimensions();
+  const numColumns = width > 768 ? 4 : width > 480 ? 3 : 2;
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedGenre, setSelectedGenre] = useState<{
+    id: number;
+    nombre: string;
+  }>({ id: 0, nombre: "Todos los géneros" });
+  const [selectedContentType, setSelectedContentType] =
+    useState<string>("Todos");
+  const [categories, setCategories] = useState<
+    { id: number; nombre: string }[]
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [movies, setMovies] = useState<Video[]>([]);
+  const [series, setSeries] = useState<SeriesGroup[]>([]);
+
+  useEffect(() => {
+    const fetchContent = async () => {
+      try {
+        setLoading(true);
+        const [moviesResponse, seriesResponse, categoriesResponse] =
+          await Promise.all([
+            fetch("http://192.1.2.142:5000/movies"),
+            fetch("http://192.1.2.142:5000/series"),
+            fetch("http://192.1.2.142:5000/categories"),
+          ]);
+        const [moviesData, seriesData, categoriesData] = await Promise.all([
+          moviesResponse.json(),
+          seriesResponse.json(),
+          categoriesResponse.json(),
+        ]);
+        setMovies(moviesData);
+        setSeries(seriesData);
+        setCategories(categoriesData);
+      } catch (error) {
+        console.error("Error al obtener el contenido:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchContent();
+  }, []);
+
+  const filteredContent = useMemo(() => {
+    const genreName = selectedGenre.nombre.toLowerCase();
+
+    const filterContent = (content: Video[]) => {
+      return content.filter((item) => {
+        const videoCategories = item.nombre_categoria
+          ? item.nombre_categoria
+              .split(",")
+              .map((cat) => cat.trim().toLowerCase())
+          : [];
+        const isInSelectedGenre =
+          selectedGenre.nombre === "Todos los géneros" ||
+          videoCategories.includes(genreName);
+        const isInSearchQuery = item.nombre
+          .toLowerCase()
+          .includes(searchQuery.toLowerCase());
+        return isInSelectedGenre && isInSearchQuery;
+      });
+    };
+
+    if (selectedContentType === "Películas") {
+      return filterContent(movies);
+    } else if (selectedContentType === "Series") {
+      return series
+        .map((seriesGroup) => ({
+          ...seriesGroup,
+          data: filterContent(seriesGroup.data),
+        }))
+        .filter((seriesGroup) => seriesGroup.data.length > 0);
+    } else {
+      const filteredMovies = filterContent(movies);
+      const filteredSeriesEpisodes = series.flatMap((seriesGroup) =>
+        filterContent(seriesGroup.data)
+      );
+      return [...filteredMovies, ...filteredSeriesEpisodes];
+    }
+  }, [searchQuery, selectedGenre, selectedContentType, movies, series]);
+
+  const renderVideoItem = ({ item }: { item: Video }) => (
+    <View style={[styles.videoItem, { width: width / numColumns - 20 }]}>
+      <Image
+        source={{ uri: item.url_imagen }}
+        style={styles.thumbnail}
+        onError={(e) =>
+          console.error("Error loading image:", e.nativeEvent.error)
+        }
+      />
+      <Text style={styles.title} numberOfLines={2} ellipsizeMode="tail">
+        {item.tipo === "episodio"
+          ? `${item.nombre_serie}: ${item.nombre}`
+          : item.nombre}
+      </Text>
+      <Text style={styles.category}>{item.nombre_categoria}</Text>
+      <View style={styles.buttonContainer}>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() =>
+            navigation.navigate("Video", {
+              uri: item.url_video,
+              title: item.nombre,
+              sinopsis: item.sinopsis,
+            })
+          }
+        >
+          <Ionicons name="play-circle-outline" size={24} color="white" />
+          <Text style={styles.buttonText}>Reproducir</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.button}
+          onPress={() => navigation.navigate("Detail", { video: item })}
+        >
+          <Ionicons name="information-circle-outline" size={24} color="white" />
+          <Text style={styles.buttonText}>Info</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderSectionHeader = ({
+    section: { title },
+  }: {
+    section: SeriesGroup;
+  }) => <Text style={styles.sectionHeader}>{title}</Text>;
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#ffffff" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <TextInput
+        style={styles.searchInput}
+        placeholder="Buscar películas o series..."
+        placeholderTextColor="#999"
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+      />
+      <View style={styles.pickerContainer}>
+        <Picker
+          selectedValue={selectedGenre.nombre}
+          onValueChange={(itemValue) => {
+            const selected = categories.find((cat) => cat.nombre === itemValue);
+            setSelectedGenre({ id: selected?.id || 0, nombre: itemValue });
+          }}
+          style={styles.picker}
+        >
+          <Picker.Item label="Todos los géneros" value="Todos los géneros" />
+          {categories.map((genre) => (
+            <Picker.Item
+              key={genre.id}
+              label={genre.nombre}
+              value={genre.nombre}
+            />
+          ))}
+        </Picker>
+        <Picker
+          selectedValue={selectedContentType}
+          onValueChange={(itemValue) => setSelectedContentType(itemValue)}
+          style={styles.picker}
+        >
+          <Picker.Item label="Todos" value="Todos" />
+          <Picker.Item label="Películas" value="Películas" />
+          <Picker.Item label="Series" value="Series" />
+        </Picker>
+      </View>
+      {selectedContentType === "Series" ? (
+        <SectionList
+          sections={filteredContent as SeriesGroup[]}
+          keyExtractor={(item) => item.id.toString()}
+          renderItem={renderVideoItem}
+          renderSectionHeader={renderSectionHeader}
+          contentContainerStyle={styles.listContainer}
+        />
+      ) : (
+        <FlatList
+          key={numColumns}
+          data={filteredContent as Video[]}
+          renderItem={renderVideoItem}
+          keyExtractor={(item) => item.id.toString()}
+          numColumns={numColumns}
+          contentContainerStyle={styles.gridContainer}
+          columnWrapperStyle={numColumns > 1 ? styles.row : null}
+        />
+      )}
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#141414",
+    paddingTop: 40,
+  },
+  listContainer: {
+    padding: 10,
+  },
+  videoItem: {
+    margin: 5,
+    backgroundColor: "#222",
+    borderRadius: 5,
+    overflow: "hidden",
+    padding: 10,
+  },
+  thumbnail: {
+    width: "100%",
+    height: 150,
+    borderRadius: 5,
+  },
+  title: {
+    fontSize: 14,
+    fontWeight: "bold",
+    color: "#fff",
+    marginVertical: 5,
+  },
+  category: {
+    fontSize: 12,
+    color: "#999",
+  },
+  buttonContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 5,
+  },
+  button: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  buttonText: {
+    color: "white",
+    marginLeft: 5,
+  },
+  searchInput: {
+    height: 40,
+    borderColor: "#444",
+    borderWidth: 1,
+    borderRadius: 5,
+    paddingHorizontal: 10,
+    marginHorizontal: 10,
+    color: "#fff",
+    backgroundColor: "#333",
+  },
+  pickerContainer: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginHorizontal: 10,
+    marginVertical: 10,
+  },
+  picker: {
+    flex: 1,
+    height: 40,
+    color: "#fff",
+    backgroundColor: "#333",
+    marginHorizontal: 5,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#141414",
+  },
+  sectionHeader: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#fff",
+    marginVertical: 10,
+    paddingLeft: 10,
+    backgroundColor: "#333",
+  },
+  gridContainer: {
+    paddingHorizontal: 10,
+  },
+  row: {
+    flex: 1,
+    justifyContent: "space-between",
+  },
+});
+
+export default HomeScreen;
+
+
+
+export async function getUserById(cuentaId) {
+    try {
+        const [rows] = await pool.query(`
+            SELECT u.*, c.username
+            FROM usuario u
+            JOIN cuenta c ON u.id = c.usuario_id
+            WHERE c.id = ?
+        `, [cuentaId]);
+        return rows[0] || null;
+    } catch (err) {
+        console.error('Error al consultar la base de datos en getUserById:', err.message);
+        throw err;
+    }
+}
